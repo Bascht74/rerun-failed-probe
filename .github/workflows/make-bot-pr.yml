@@ -1,0 +1,42 @@
+# Helper for the /rerun-failed probe (E-626). Only for the probe: the
+# throwaway repository or the fork's probe-main branch. Opens a pull request
+# against the default branch as github-actions[bot], so the owner can use the
+# command on a PR he did not write (the write-access path).
+#
+# Needs Settings > Actions > General > "Allow GitHub Actions to create and
+# approve pull requests". Runs of a PR made with GITHUB_TOKEN wait for approval.
+
+name: Make bot PR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write       # git.createRef and repos.createOrUpdateFileContents for the probe branch
+  pull-requests: write  # pulls.create
+
+jobs:
+  open:
+    name: Open a PR as github-actions[bot]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Push a branch and open a PR
+        uses: actions/github-script@v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const base = context.payload.repository.default_branch;
+            const branch = `probe-bot-${context.runId}`;
+            const { data: baseBranch } = await github.rest.repos.getBranch({ owner, repo, branch: base });
+            await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseBranch.commit.sha });
+            await github.rest.repos.createOrUpdateFileContents({
+              owner, repo, branch,
+              path: `probe/${branch}.txt`,
+              message: 'Probe change by github-actions',
+              content: Buffer.from(`${branch}\n`).toString('base64'),
+            });
+            const { data: pr } = await github.rest.pulls.create({
+              owner, repo, head: branch, base, title: `Probe PR from ${branch}`,
+            });
+            core.info(`Opened ${pr.html_url}`);

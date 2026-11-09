@@ -1,0 +1,52 @@
+# Dummy CI for the /rerun-failed probe (E-626). Only for the throwaway
+# repository or the fork's probe-main branch, never for esphome/esphome or the
+# fork's dev. Its file name and the pull_request trigger must match what the
+# command looks for: workflow_id 'ci.yml'.
+#
+# "Flaky job" fails on the first attempt and passes on every re-run. On the
+# branch probe-always-red it always fails, to reach the re-run limit.
+
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Both jobs wait two minutes, so a command written right after a push or a
+  # re-run finds the run still in progress.
+  stable:
+    name: Stable job
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pass after two minutes
+        run: sleep 120
+
+  flaky:
+    name: Flaky job
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on the first attempt
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          sleep 120
+          echo "Attempt $RUN_ATTEMPT on $HEAD_REF"
+          if [ "$HEAD_REF" = "probe-always-red" ]; then
+            exit 1
+          fi
+          test "$RUN_ATTEMPT" -ge 2
+
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [stable, flaky]
+    if: always()
+    steps:
+      - name: Check job results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: echo "$NEEDS_JSON" | jq -e 'all(.result == "success")'
