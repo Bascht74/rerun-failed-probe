@@ -4,7 +4,9 @@
 # command looks for: workflow_id 'ci.yml'.
 #
 # "Flaky job" fails on the first attempt and passes on every re-run. On the
-# branch probe-always-red it always fails, to reach the re-run limit.
+# branch probe-always-red it always fails, to reach the re-run limit. On the
+# bot branches probe-bot-* it always fails too, because the approval of a run
+# already makes it attempt 2.
 
 name: CI
 
@@ -35,9 +37,9 @@ jobs:
         run: |
           sleep 120
           echo "Attempt $RUN_ATTEMPT on $HEAD_REF"
-          if [ "$HEAD_REF" = "probe-always-red" ]; then
-            exit 1
-          fi
+          case "$HEAD_REF" in
+            probe-always-red|probe-bot-*) exit 1 ;;
+          esac
           test "$RUN_ATTEMPT" -ge 2
 
   ci-status:
