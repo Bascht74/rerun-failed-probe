@@ -104,6 +104,12 @@ jobs:
               await github.rest.actions.reRunWorkflowFailedJobs({ owner, repo, run_id: run.id });
             } catch (error) {
               await react('confused');
+              // A 403 means GitHub refuses to re-run this run, such as one older than 30 days.
+              // The step still passes: a failed one would be a red check on the default branch.
+              if (error.status === 403) {
+                core.info(`GitHub refused to re-run the failed jobs of CI run ${run.id}: ${error.message}`);
+                return;
+              }
               throw error;
             }
             core.info(`Re-running the failed jobs of CI run ${run.id}`);
