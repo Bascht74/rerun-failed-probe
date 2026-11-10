@@ -12,6 +12,9 @@ name: CI
 
 on:
   pull_request:
+    # Not "reopened": reopening a probe PR must not start a new run, so the
+    # command still finds the old run that GitHub refuses to re-run.
+    types: [opened, synchronize]
 
 permissions:
   contents: read
