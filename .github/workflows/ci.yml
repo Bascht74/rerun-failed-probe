@@ -7,6 +7,13 @@
 # branch probe-always-red it always fails, to reach the re-run limit. On the
 # bot branches probe-bot-* it always fails too, because the approval of a run
 # already makes it attempt 2.
+#
+# E-779: the steps of "CI Status" and the concurrency block are esphome's, byte
+# for byte, so a new push cancels the PR's running CI run as it does there. The
+# push trigger is only for the probe-push-* branches, to get a push run.
+# "Flaky job" always fails on probe-e779-red and passes on probe-e779-green.
+# Both other jobs write one line to their job summary, to show where the note
+# of "CI Status" lands on the run's summary page.
 
 name: CI
 
@@ -15,9 +22,16 @@ on:
     # Not "reopened": reopening a probe PR must not start a new run, so the
     # command still finds the old run that GitHub refuses to re-run.
     types: [opened, synchronize]
+  push:
+    branches: ['probe-push-*']
 
 permissions:
   contents: read
+
+concurrency:
+  # yamllint disable-line rule:line-length
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Both jobs wait two minutes, so a command written right after a push or a
@@ -27,7 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Pass after two minutes
-        run: sleep 120
+        run: |
+          sleep 120
+          echo "Summary line of the stable job" >> "$GITHUB_STEP_SUMMARY"
 
   flaky:
     name: Flaky job
@@ -40,8 +56,10 @@ jobs:
         run: |
           sleep 120
           echo "Attempt $RUN_ATTEMPT on $HEAD_REF"
+          echo "Summary line of the flaky job, attempt $RUN_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"
           case "$HEAD_REF" in
-            probe-always-red|probe-bot-*) exit 1 ;;
+            probe-always-red|probe-bot-*|probe-e779-red) exit 1 ;;
+            probe-e779-green) exit 0 ;;
           esac
           test "$RUN_ATTEMPT" -ge 2
 
@@ -54,4 +72,35 @@ jobs:
       - name: Check job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: echo "$NEEDS_JSON" | jq -e 'all(.result == "success")'
+        run: |
+          # memory-impact-target-branch is allowed to fail without blocking CI.
+          # This job builds the target branch (dev/beta/release) which may fail because:
+          # 1. The target branch has a build issue independent of this PR
+          # 2. This PR fixes a build issue on the target branch
+          # In either case, we only care that the PR branch builds successfully.
+          # Every other job must have succeeded or been skipped; a "cancelled" or
+          # "failure" result fails this check so CI is not reported green when the
+          # workflow was cancelled.
+          echo "$NEEDS_JSON" | jq -e 'del(.["memory-impact-target-branch"]) | all(.result == "success" or .result == "skipped")'
+      - name: Point to the /rerun-failed command
+        # Only while /rerun-failed can still re-run this run: attempt 3 is the
+        # last it starts (MAX_RERUNS = 2 in .github/scripts/rerun-failed-ci-jobs/index.js)
+        # and it skips cancelled runs. This job starts after a cancel with
+        # cancelled() false, so the needs show whether the run was cancelled.
+        if: >-
+          failure() &&
+          github.event_name == 'pull_request' &&
+          github.run_attempt < 3 &&
+          !contains(needs.*.result, 'cancelled')
+        run: |
+          tee -a "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Re-run failed jobs
+
+          The PR author or anyone with write access can comment just
+          `/rerun-failed` on the pull request to re-run only the failed jobs of
+          its newest CI run. That helps when a job failed because of a temporary
+          problem outside the pull request, such as a lost runner or a download
+          timeout. Look at the failed job's log first: a re-run builds the same
+          merge with `dev`, so a failure from the pull request or from a broken
+          `dev` fails again.
+          EOF
